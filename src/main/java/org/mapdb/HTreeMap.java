@@ -888,6 +888,7 @@ public class HTreeMap<K,V>
             consistencyLock.unlock();
         }
 
+        notify(key, ret, value);
         if(expireSingleThreadFlag)
             expirePurge();
 
@@ -966,7 +967,6 @@ public class HTreeMap<K,V>
         engine.update(recid, ln, LN_SERIALIZER);
         if(expireFlag)
             expireLinkBump(segment,ln.expireLinkNodeRecid,false);
-        notify(key,  oldVal, value);
         return oldVal;
     }
 
@@ -984,7 +984,6 @@ public class HTreeMap<K,V>
         engine.update(dirRecid, dir, DIR_SERIALIZER);
         if(expireFlag)
             expireLinkAdd(segment,expireNodeRecid, newRecid,h);
-        notify(key, null, value);
         //update counter
         counter(segment,engine,+1);
     }
@@ -1026,7 +1025,6 @@ public class HTreeMap<K,V>
         int parentPos = (h>>>(7*level )) & 0x7F;
         dir = dirPut(dir, parentPos, (nextDirRecid<<1) | 0);
         engine.update(dirRecid, dir, DIR_SERIALIZER);
-        notify(key, null, value);
         //update counter
         counter(segment, engine, +1);
     }
@@ -1060,8 +1058,10 @@ public class HTreeMap<K,V>
             consistencyLock.unlock();
         }
 
+        notify((K) key, ret, null);
         if(expireSingleThreadFlag)
             expirePurge();
+        
         return ret;
     }
 
@@ -1126,7 +1126,6 @@ public class HTreeMap<K,V>
                             throw new DBException.DataCorruption("inconsistent hash");
                         engine.delete(recid, LN_SERIALIZER);
                         if(removeExpire && expireFlag) expireLinkRemove(segment, ln.expireLinkNodeRecid);
-                        notify((K) key, ln.value, null);
                         counter(segment,engine,-1);
                         return ln.value;
                     }
@@ -1706,6 +1705,7 @@ public class HTreeMap<K,V>
             throw new NullPointerException();
 
         boolean ret;
+        Object oldVal = null;
 
         final int h = HTreeMap.this.hash(key);
         final int segment = h >>>28;
@@ -1716,9 +1716,10 @@ public class HTreeMap<K,V>
             try {
                 LinkedNode otherVal = getInner(key, h, segment);
                 ret = (otherVal != null && valueSerializer.equals((V) otherVal.value, (V) value));
-                if (ret)
+                if (ret) {
                     removeInternal(key, segment, h, true);
-
+                    oldVal = otherVal.value;
+                }
             } finally {
                 segmentLocks[segment].writeLock().unlock();
             }
@@ -1726,9 +1727,11 @@ public class HTreeMap<K,V>
             consistencyLock.unlock();
         }
 
+        if(ret)
+            notify((K) key, (V) oldVal, null);
         if(expireSingleThreadFlag)
             expirePurge();
-
+        
         return ret;
     }
 
@@ -2254,8 +2257,8 @@ public class HTreeMap<K,V>
     }
 
     protected void notify(K key, V oldValue, V newValue) {
-        if(CC.ASSERT && ! (segmentLocks[hash(key)>>>28].isWriteLockedByCurrentThread()))
-            throw new AssertionError();
+        //if(CC.ASSERT && ! (segmentLocks[hash(key)>>>28].isWriteLockedByCurrentThread()))
+        //    throw new AssertionError();
         Bind.MapListener<K,V>[] modListeners2  = modListeners;
         for(Bind.MapListener<K,V> listener:modListeners2){
             if(listener!=null)
